@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Foundation
+import Darwin
 
 func getDocumentsDirectory() -> URL {
     let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
@@ -17,21 +18,32 @@ func getDocumentsDirectory() -> URL {
 struct ContentView: View {
     var symlinkURL: URL
     @State private var currentStep = 0
-    @State private var appDataPath = "/var/mobile/Containers"
     @State private var alertMessage = ""
     @State private var showAlert = false
     @State private var isSymlinkCreated = false
     @State private var showSuccess = false
     @State private var checkPath = "/var/mobile/Containers/example.txt"
     @State private var showCredits = false
+    @State private var shortcutRunInThisSession = false
+    @AppStorage("appDataPath") private var appDataPath: String = ""
+    @AppStorage("skipStep3") private var skipStep3 = false
+    @AppStorage("autoSymlinkEnabled") private var autoSymlinkEnabled = false
+    @AppStorage("autoRunShortcut") private var autoRunShortcut = false
+
     
     private let steps = [
         "Setup App Data Path",
         "Create Symlink",
-        "Copy Files", 
+        "Copy Files",
         "Complete Process"
     ]
     
+    func runShortcut(named name: String) {
+        guard let urlEncodedName = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "shortcuts://run-shortcut?name=writetosymlinked") else { return }
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -89,6 +101,14 @@ struct ContentView: View {
                     
                     Spacer(minLength: 100)
                 }
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        NavigationLink(destination: SettingsView()) {
+                            Image(systemName: "gearshape")
+                        }
+                    }
+                }
+                
             }
             .background(Color(.systemBackground))
         }
@@ -152,7 +172,7 @@ struct ContentView: View {
             .disabled(appDataPath.isEmpty)
         }
     }
-    
+
     private var step2View: some View {
         VStack(spacing: 16) {
             StepHeader(
@@ -160,7 +180,7 @@ struct ContentView: View {
                 title: "Create Symlink",
                 description: "Create the symlink to this app's data (you can check in Files.app)"
             )
-            
+
             VStack(spacing: 12) {
                 InfoCard(
                     title: "Ready to Create Symlink",
@@ -168,7 +188,7 @@ struct ContentView: View {
                         ("Target Path", appDataPath)
                     ]
                 )
-                
+
                 if isSymlinkCreated {
                     HStack {
                         Image(systemName: "checkmark.circle.fill")
@@ -182,7 +202,7 @@ struct ContentView: View {
                     .cornerRadius(12)
                 }
             }
-            
+
             HStack(spacing: 12) {
                 Button("Back") {
                     currentStep = 0
@@ -192,8 +212,14 @@ struct ContentView: View {
                 .background(Color.gray.opacity(0.2))
                 .foregroundColor(.primary)
                 .cornerRadius(12)
-                
-                Button(action: createSymlink) {
+
+                Button(action: {
+                    if isSymlinkCreated {
+                        currentStep = skipStep3 ? 3 : 2
+                    } else {
+                        createSymlink()
+                    }
+                }) {
                     HStack {
                         if isSymlinkCreated {
                             Text("Next Step")
@@ -211,8 +237,13 @@ struct ContentView: View {
                 .cornerRadius(12)
             }
         }
+        .onAppear {
+            if autoSymlinkEnabled && !isSymlinkCreated {
+                createSymlink()
+            }
+        }
     }
-    
+
     private var step3View: some View {
         VStack(spacing: 16) {
             StepHeader(
@@ -220,7 +251,7 @@ struct ContentView: View {
                 title: "Copy Your Files",
                 description: "Use Files.app to copy any files you want to write into this app's Documents folder"
             )
-            
+
             VStack(spacing: 12) {
                 InstructionCard(
                     icon: "doc.on.doc",
@@ -228,7 +259,7 @@ struct ContentView: View {
                     description: "Open Files.app and copy and paste any files you want to write into:",
                     highlight: "On My iPhone → writetosymlinked"
                 )
-                
+
                 InstructionCard(
                     icon: "doc.text",
                     title: "Example File Created",
@@ -236,7 +267,7 @@ struct ContentView: View {
                     highlight: "example.txt"
                 )
             }
-            
+
             HStack(spacing: 12) {
                 Button("Back") {
                     currentStep = 1
@@ -246,7 +277,7 @@ struct ContentView: View {
                 .background(Color.gray.opacity(0.2))
                 .foregroundColor(.primary)
                 .cornerRadius(12)
-                
+
                 Button(action: {
                     currentStep = 3
                 }) {
@@ -260,6 +291,13 @@ struct ContentView: View {
                 .background(Color.blue)
                 .foregroundColor(.white)
                 .cornerRadius(12)
+            }
+        }
+        .onAppear {
+            if skipStep3 && currentStep == 2 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    currentStep = 3
+                }
             }
         }
     }
@@ -288,7 +326,6 @@ struct ContentView: View {
                     .cornerRadius(8)
             }
             
-            // File existence check section
             VStack(alignment: .leading, spacing: 8) {
                 Text("Check File Existence")
                     .font(.headline)
@@ -301,7 +338,7 @@ struct ContentView: View {
                 Button("Check File") {
                     let fileExists = access(checkPath, F_OK) == 0
                     alertMessage = "File \(checkPath) exists: \(fileExists ? "True" : "False")"
-                    showAlert.toggle()
+                    showAlert = true
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
@@ -335,6 +372,33 @@ struct ContentView: View {
                 .foregroundColor(.white)
                 .cornerRadius(12)
             }
+            
+            Button(action: {
+                runShortcut(named: "writetosymlinked")
+            }) {
+                HStack {
+                    Image(systemName: "bolt.fill")
+                    Text("Run Shortcut (example.txt only)")
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.purple)
+                .foregroundColor(.white)
+                .cornerRadius(12)
+            }
+        }
+        .alert(isPresented: $showAlert) {
+            Alert(
+                title: Text("File Check"),
+                message: Text(alertMessage),
+                dismissButton: .default(Text("OK"))
+            )
+        }
+        .onAppear {
+            if autoRunShortcut && !shortcutRunInThisSession {
+                runShortcut(named: "writetosymlinked")
+                shortcutRunInThisSession = true
+            }
         }
     }
     
@@ -361,7 +425,6 @@ struct ContentView: View {
             showAlert = true
         }
     }
-    
     private func createExampleFile() {
         let exampleFile = getDocumentsDirectory().appendingPathComponent("example.txt", conformingTo: .plainText)
         let exampleText = "This is an example file created after symlink.\nYou can copy more files here and delete them to write to target directory."
@@ -503,16 +566,16 @@ struct CreditsView: View {
 //                        Image(systemName: "star.circle.fill")
 //                            .font(.system(size: 60))
 //                            .foregroundStyle(.yellow.gradient)
-//                        
+//
 //                        Text("Credits")
 //                            .font(.largeTitle.bold())
-//                        
+//
 //                        Text("Thanks to these amazing contributors")
 //                            .font(.subheadline)
 //                            .foregroundColor(.secondary)
 //                    }
 //                    .padding(.top, 20)
-//                    
+//
                     // Contributors
                     VStack(spacing: 20) {
                         CreditCard(
@@ -598,7 +661,30 @@ struct CreditCard: View {
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
+    
 }
+
+struct SettingsView: View {
+    @AppStorage("autoSymlinkEnabled") private var autoSymlinkEnabled = false
+    @AppStorage("autoRunShortcut") private var autoRunShortcut = false
+    @AppStorage("skipStep3") private var skipStep3 = false
+
+    var body: some View {
+        Form {
+            Toggle("Auto-create symlink (Step 2)", isOn: $autoSymlinkEnabled)
+            Toggle("Skip the 'Copy Your Files' guide (Step 3)", isOn: $skipStep3)
+            Toggle("Auto-run Shortcut (Step 4)", isOn: $autoRunShortcut)
+            Section(header: Text("Shortcuts")) {
+                Link(destination: URL(string: "https://www.icloud.com/shortcuts/9df5343371c14a3b9e8d07f9b12e2cc4")!) {
+                    Label("Get 'writetosymlinked' Shortcut", systemImage: "bolt.fill")
+                        .foregroundColor(.purple)
+                }
+            }
+        }
+        .navigationTitle("Settings")
+    }
+}
+
 
 #Preview {
     ContentView()
